@@ -21,12 +21,12 @@
     "vite": "^6.2.3",
     "express": "^4.21.2",
     "dotenv": "^17.2.3",
-    "motion": "^12.23.24"
+    "motion": "^12.23.24",
+    "esbuild": "^0.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <!-- Premium Gradient Background -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E40AF" />
+      <stop offset="50%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <!-- Glowing Accent Gradient -->
+    <linearGradient id="pulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="50%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#34D399" />
+    </linearGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="logoShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#1E3A8A" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Base Rounded Badge -->
+  <rect x="10" y="10" width="100" height="100" rx="26" fill="url(#bgGrad)" filter="url(#logoShadow)" />
+
+  <!-- Subtle Inner Ring Highlight -->
+  <rect x="11.5" y="11.5" width="97" height="97" rx="24.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1.5" />
+
+  <!-- Stylized Medical Cross with Smooth Curvature -->
+  <g transform="translate(60, 60)">
+    <!-- Vertical Cross Stem -->
+    <rect x="-9" y="-26" width="18" height="52" rx="7" fill="#FFFFFF" opacity="0.95" />
+    <!-- Horizontal Cross Stem -->
+    <rect x="-26" y="-9" width="52" height="18" rx="7" fill="#FFFFFF" opacity="0.95" />
+
+    <!-- Protective Compassionate Heart/Caring Ring Arch -->
+    <path 
+      d="M -30 -4 C -34 -20 -15 -35 0 -22 C 15 -35 34 -20 30 -4 C 26 12 0 28 0 28 C 0 28 -26 12 -30 -4 Z" 
+      fill="none" 
+      stroke="url(#pulseGrad)" 
+      stroke-width="3" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      opacity="0.9"
+    />
+
+    <!-- Dynamic Vital Sign Pulse Track (Lifebeat) -->
+    <path 
+      d="M -32 0 L -18 0 L -11 -14 L -4 14 L 3 -8 L 9 5 L 15 0 L 32 0" 
+      fill="none" 
+      stroke="#0284C7" 
+      stroke-width="3.5" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+    />
+  </g>
+
+  <!-- Subtle Spark of Empathy / AI Intellect -->
+  <circle cx="88" cy="32" r="4" fill="#38BDF8" />
+  <circle cx="88" cy="32" r="2" fill="#FFFFFF" />
+</svg>

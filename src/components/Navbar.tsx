@@ -35,9 +35,11 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Brand & Track Info */}
         <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
-              P
-            </div>
+            <img 
+              src="/carepal-logo.svg" 
+              alt="CarePal Triage Logo" 
+              className="w-9 h-9 rounded-xl shadow-xs" 
+            />
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 tracking-tight text-base">PulseTriage</span>

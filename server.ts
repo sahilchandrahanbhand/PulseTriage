@@ -4,7 +4,12 @@ import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const PORT = 3000;
+
+// In development, dev server strictly binds to port 3000 behind the nginx container proxy.
+// In production (Cloud Run), the container must listen on the port injected by Cloud Run (process.env.PORT, default 8080).
+const PORT = process.env.NODE_ENV === "production"
+  ? (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000)
+  : 3000;
 
 app.use(express.json());
 
@@ -29,11 +34,29 @@ interface AppUser {
 
 const SESSIONS = new Map<string, { token: string; user: AppUser; expiresAt: number }>();
 
-const DATA_DIR = path.join(process.cwd(), "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Resilient data storage path: prefer cwd/data, fallback to /tmp/data if read-only
+function resolveDataDir(): string {
+  const localData = path.join(process.cwd(), "data");
+  try {
+    if (!fs.existsSync(localData)) {
+      fs.mkdirSync(localData, { recursive: true });
+    }
+    const testFile = path.join(localData, ".write_check");
+    fs.writeFileSync(testFile, "ok", "utf-8");
+    fs.unlinkSync(testFile);
+    return localData;
+  } catch (e) {
+    const tmpData = path.join("/tmp", "carepal-data");
+    if (!fs.existsSync(tmpData)) {
+      try {
+        fs.mkdirSync(tmpData, { recursive: true });
+      } catch (err) {}
+    }
+    return tmpData;
+  }
 }
 
+const DATA_DIR = resolveDataDir();
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DOCTORS_FILE = path.join(DATA_DIR, "doctors.json");
 const INTAKES_FILE = path.join(DATA_DIR, "intakes.json");
@@ -209,9 +232,15 @@ if (!fs.existsSync(APPOINTMENTS_FILE)) {
 // Load knowledge base rules
 let triageRulesData: any = null;
 try {
-  const rulesPath = path.join(DATA_DIR, "triage_rules.json");
-  if (fs.existsSync(rulesPath)) {
-    triageRulesData = JSON.parse(fs.readFileSync(rulesPath, "utf-8"));
+  const possiblePaths = [
+    path.join(process.cwd(), "data", "triage_rules.json"),
+    path.join(DATA_DIR, "triage_rules.json"),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      triageRulesData = JSON.parse(fs.readFileSync(p, "utf-8"));
+      break;
+    }
   }
 } catch (err) {
   console.error("Error reading triage_rules.json:", err);
@@ -231,6 +260,52 @@ function getGeminiClient(): GoogleGenAI | null {
     });
   }
   return geminiClient;
+}
+
+// Resilient Gemini calling with retry on 503/429 and automatic model cascade
+async function generateContentWithFallback(ai: GoogleGenAI, request: { contents: any; config?: any }) {
+  const models = [
+    process.env.GEMINI_MODEL || "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest"
+  ];
+  const uniqueModels = Array.from(new Set(models.filter(Boolean)));
+  let lastError: any = null;
+
+  for (const model of uniqueModels) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: request.contents,
+          config: request.config,
+        });
+        if (response && response.text) {
+          return { response, modelUsed: model };
+        }
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || String(err);
+        const isUnavailableOrRateLimited =
+          errMsg.includes("503") ||
+          errMsg.includes("UNAVAILABLE") ||
+          errMsg.includes("high demand") ||
+          errMsg.includes("429") ||
+          errMsg.includes("RESOURCE_EXHAUSTED");
+
+        if (isUnavailableOrRateLimited && attempt === 0) {
+          // Brief pause for demand spike
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          continue;
+        }
+
+        // Move to next fallback model in cascade
+        break;
+      }
+    }
+  }
+
+  throw lastError || new Error("All Gemini model endpoints currently unavailable");
 }
 
 // Deterministic Rule Evaluator
@@ -605,26 +680,29 @@ async function extractFactsWithGemini(patientText: string, followUpAnswers: Reco
   `;
 
   try {
-    const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-    const response = await ai.models.generateContent({
-      model,
+    const result = await generateContentWithFallback(ai, {
       contents: prompt,
       config: {
         responseMimeType: "application/json",
       },
     });
 
-    const parsed = JSON.parse(response.text || "{}");
+    const parsed = JSON.parse(result.response.text || "{}");
     return parsed;
-  } catch (err) {
-    console.error("Gemini fact extraction failed, using fallback:", err);
+  } catch (err: any) {
+    console.warn("Gemini service unavailable, switching seamlessly to protocol rule extractor:", err?.message || err);
     return fallbackExtractFacts(patientText, followUpAnswers);
   }
 }
 
 // ----------------------------------------------------
-// API ROUTES
+// API & HEALTH ROUTES
 // ----------------------------------------------------
+
+// Standard Kubernetes & Cloud Run health check endpoints
+app.get(["/health", "/healthz", "/_health"], (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -849,79 +927,254 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ success: true });
 });
 
+// Robust JSON cleaner and parser
+function cleanAndParseJson<T>(rawText: string, fallback: T): T {
+  if (!rawText) return fallback;
+  try {
+    return JSON.parse(rawText);
+  } catch (e) {
+    const cleaned = rawText
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/g, "")
+      .trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          return JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+        } catch (e3) {
+          // fallback
+        }
+      }
+    }
+  }
+  return fallback;
+}
+
+// Meaningful clinical companion fallback generator
+function generateMeaningfulCompanionResponse(
+  message: string,
+  patientInfo: any = {},
+  checkedSymptomNames: string[] = []
+) {
+  const lower = (message || "").toLowerCase();
+  const name = patientInfo.name ? patientInfo.name.split(" ")[0] : "there";
+
+  // 1. Chest pain / cardiac concerns
+  if (lower.includes("chest") || lower.includes("heart") || lower.includes("pressure") || lower.includes("crush") || lower.includes("angina") || lower.includes("palpitat")) {
+    return {
+      reply: `Dear ${name}, chest discomfort must always be treated with immediate priority and care. If the pressure feels crushing, squeezes into your left arm, neck, or jaw, or is accompanied by sudden cold sweating or breathlessness, please seek emergency evaluation right away. If you're resting right now, sit upright comfortably, loosen any tight clothing around your collar and waist, and take slow, calm breaths.`,
+      comfortTips: [
+        "Sit upright in a supportive chair to ease breathing and heart workload.",
+        "Loosen tight collars, ties, or belts to relieve chest restriction.",
+        "Seek emergency room evaluation or alert bedside staff immediately if pain radiates or cold sweats appear."
+      ],
+      actionRecommendation: "emergency",
+      suggestions: [
+        "Pain spreads to my arm or jaw",
+        "No radiation, feels muscular or sharp",
+        "Having cold sweats and shortness of breath",
+        "Started after physical exertion"
+      ],
+      detectedSymptoms: ["Chest discomfort / tightness", "Cardiac evaluation recommended"]
+    };
+  }
+
+  // 2. Breathing difficulty / shortness of breath
+  if (lower.includes("breath") || lower.includes("short") || lower.includes("gasp") || lower.includes("wheez") || lower.includes("inhal") || lower.includes("chok")) {
+    return {
+      reply: `I understand how frightening it feels when catching your breath is difficult, ${name}. Take a gentle, slow breath with me. Sit upright with your shoulders dropped, and try breathing in slowly through your nose and gently out through pursed lips. If you have a prescribed rescue inhaler, keep it right by your side. If you find it hard to speak in complete sentences or your lips look bluish, let's have our emergency team examine you immediately.`,
+      comfortTips: [
+        "Sit upright with your chest slightly tilted forward to maximize airway capacity.",
+        "Practice pursed-lip breathing: slow inhale through nose, double-length exhale through lips.",
+        "If you use a prescribed inhaler or nebulizer, use as directed by your physician."
+      ],
+      actionRecommendation: "triage",
+      suggestions: [
+        "I can speak full sentences comfortably",
+        "Struggling to finish a complete sentence",
+        "I have asthma and have my inhaler",
+        "Breathing worsens when lying flat"
+      ],
+      detectedSymptoms: ["Difficulty catching breath", "Respiratory distress"]
+    };
+  }
+
+  // 3. Fever / Chills / High Temperature
+  if (lower.includes("fever") || lower.includes("temp") || lower.includes("hot") || lower.includes("chill") || lower.includes("shiver") || lower.includes("burn")) {
+    return {
+      reply: `Fevers can leave you feeling drained, achy, and exhausted, ${name}. A fever is your body's immune system working hard to fight off an infection. Stay in a temperate, well-ventilated room wearing light, breathable clothing, and drink plenty of fluids like water, oral rehydration solution, or warm herbal broth. Watch closely for critical warning signs like a stiff neck, sensitivity to bright lights, or confusion, which need immediate physician evaluation.`,
+      comfortTips: [
+        "Drink small, frequent sips of water, electrolyte fluids, or clear broth to stay well-hydrated.",
+        "Rest in lightweight clothing; avoid heavy blankets which trap body heat.",
+        "Apply a lukewarm (not ice cold) damp cloth across your forehead or back of your neck."
+      ],
+      actionRecommendation: "booking",
+      suggestions: [
+        "Fever is above 102°F (38.9°C)",
+        "Fever started 1-2 days ago",
+        "No neck stiffness or rash present",
+        "Trouble keeping liquids down"
+      ],
+      detectedSymptoms: ["High fever / chills", "Elevated body temperature"]
+    };
+  }
+
+  // 4. Physical injury / Fall / Ankle / Sprain / Bleeding / Fracture / Cannot walk
+  if (lower.includes("fall") || lower.includes("fell") || lower.includes("hurt") || lower.includes("bone") || lower.includes("ankle") || lower.includes("knee") || lower.includes("leg") || lower.includes("foot") || lower.includes("twist") || lower.includes("sprain") || lower.includes("cut") || lower.includes("bleed") || lower.includes("wound")) {
+    return {
+      reply: `Ouch, ${name}, that sounds really painful! Acute injuries need careful handling to protect the joint and soft tissues. Follow the gentle R.I.C.E. protocol right now: Rest the injured area, apply an Ice pack wrapped in a cloth for 15-20 minutes, keep light Compression if swollen, and Elevate the limb above heart level. If you are unable to take four weight-bearing steps or notice visible deformity, an X-ray evaluation by a doctor is strongly recommended.`,
+      comfortTips: [
+        "Rest and keep weight completely off the injured joint or limb.",
+        "Elevate the area on soft pillows above the level of your heart to drain fluid.",
+        "Apply an ice pack wrapped in a towel for 15 minutes at a time (never apply ice directly to bare skin)."
+      ],
+      actionRecommendation: "booking",
+      suggestions: [
+        "Cannot bear weight or take 4 steps",
+        "Can walk with mild to moderate limp",
+        "Significant swelling and bruising visible",
+        "No open cut, but tender to touch"
+      ],
+      detectedSymptoms: ["Physical injury / limb trauma", "Cannot bear full weight"]
+    };
+  }
+
+  // 5. Abdominal pain / Stomach / Vomiting / Nausea / Diarrhea
+  if (lower.includes("stomach") || lower.includes("belly") || lower.includes("cramp") || lower.includes("abdom") || lower.includes("vomit") || lower.includes("nausea") || lower.includes("throw up") || lower.includes("diarrhea")) {
+    return {
+      reply: `Stomach pain and nausea can be so draining and uncomfortable, ${name}. While your digestive tract is sensitive, give your stomach a rest by pausing heavy foods and sipping clear fluids or electrolyte drinks very slowly. If the pain is sharp and localized in your lower right abdomen, if your belly feels rigid or hard like a board, or if you cannot keep liquids down for more than 12 hours, please see our triage staff without delay.`,
+      comfortTips: [
+        "Take small sips of room-temperature water or electrolyte solutions every few minutes.",
+        "Rest on your side with knees slightly drawn up to relieve abdominal wall tension.",
+        "Avoid greasy, acidic, or dairy foods until your stomach settles."
+      ],
+      actionRecommendation: "triage",
+      suggestions: [
+        "Sharp pain localized in lower right belly",
+        "Dull cramping all over abdomen",
+        "Experiencing vomiting and nausea",
+        "Belly is soft, not rigid to touch"
+      ],
+      detectedSymptoms: ["Abdominal cramps / nausea", "Gastrointestinal distress"]
+    };
+  }
+
+  // 6. Headache / Migraine / Dizziness
+  if (lower.includes("headache") || lower.includes("migraine") || lower.includes("head") || lower.includes("dizzy") || lower.includes("lighthead") || lower.includes("vertigo")) {
+    return {
+      reply: `Headaches and dizziness can be truly debilitating, ${name}. Resting in a quiet, darkened room away from phone or computer screens can help soothe nerve irritation. Drink a tall glass of cool water, as mild dehydration is one of the most common headache triggers. However, if this feels like a sudden 'thunderclap' (the worst headache of your life), or if you notice weakness on one side of your face or body, please alert clinical staff immediately.`,
+      comfortTips: [
+        "Rest in a quiet, dark room and dim all screens and artificial lighting.",
+        "Hydrate with a glass of water or electrolyte solution.",
+        "Apply a cool damp cloth across your forehead or a warm pad on tight neck muscles."
+      ],
+      actionRecommendation: "booking",
+      suggestions: [
+        "Throbbing pain on one side of head",
+        "Sensitive to light and sound",
+        "Dizzy when standing up quickly",
+        "Steady tension across forehead and temples"
+      ],
+      detectedSymptoms: ["Headache / migraine", "Dizziness / lightheadedness"]
+    };
+  }
+
+  // 7. Medications / "Can I take medicine?"
+  if (lower.includes("med") || lower.includes("pill") || lower.includes("tylenol") || lower.includes("advil") || lower.includes("ibuprofen") || lower.includes("aspirin") || lower.includes("paracetamol") || lower.includes("dose")) {
+    return {
+      reply: `Asking about medications is very wise, ${name}. While common over-the-counter pain relievers like acetaminophen (paracetamol) or ibuprofen are often used for fever and pain, safety depends on your personal health history—such as liver, kidney, or stomach conditions, and other prescriptions you take. When you speak with our attending physician today, they will verify your records and specify the safest medicine and exact dose for you.`,
+      comfortTips: [
+        "Never take medications on an empty stomach unless directed by a physician.",
+        "Keep a photo or list of your current prescriptions and allergies handy for your consultation.",
+        "Avoid mixing multiple cold or flu remedies that may contain duplicate active ingredients."
+      ],
+      actionRecommendation: "booking",
+      suggestions: [
+        "I have existing medication allergies",
+        "Currently taking daily prescription drugs",
+        "Looking for non-medication comfort tips",
+        "Want to consult the doctor on safe dosage"
+      ],
+      detectedSymptoms: ["Medication consultation requested"]
+    };
+  }
+
+  // 8. General empathetic checkup / Default
+  return {
+    reply: `Thank you for sharing that with me, ${name}. I am right here beside you to guide you through your intake. Every symptom you mention helps our clinical team prepare the right room, triage priority, and doctor for your visit. Tell me what you're feeling, or click below to generate your official triage note or schedule a slot with an on-duty physician.`,
+    comfortTips: [
+      "Take slow, gentle breaths and rest in a relaxed position.",
+      "Check off any relevant symptoms on your intake checklist so doctors have full context.",
+      "Click 'Generate Triage Note' or 'Book Doctor Slot' whenever you feel ready."
+    ],
+    actionRecommendation: "triage",
+    suggestions: [
+      "Started earlier today",
+      "Pain is moderate (around 4 out of 10)",
+      "Feeling anxious about my symptoms",
+      "Ready to book a doctor consultation"
+    ],
+    detectedSymptoms: [message.slice(0, 30).trim()]
+  };
+}
+
 // ----------------------------------------------------
 // FRIENDLY COMPANION CHAT ROUTE ("LIKE A FRIEND")
 // ----------------------------------------------------
 
 app.post("/api/chat/friendly-message", async (req, res) => {
+  const { message, conversationHistory = [], checklist = [], patientInfo = {} } = req.body;
+  const checkedSymptomNames = (checklist || []).filter((c: any) => c.checked).map((c: any) => c.label);
+
   try {
-    const { message, conversationHistory = [], checklist = [], patientInfo = {} } = req.body;
     const ai = getGeminiClient();
-
-    const checkedSymptomNames = (checklist || []).filter((c: any) => c.checked).map((c: any) => c.label);
-
     if (!ai) {
-      // Friendly fallback conversational companion
-      const lower = (message || "").toLowerCase();
-      let reply = "I'm right here with you! Thank you so much for sharing that with me. Let's make sure you get the care and relief you need.";
-      let suggestions = ["Started 2 hours ago", "Pain is moderate (4/10)", "No fever right now", "I have mild nausea"];
-      let detectedSymptoms: string[] = [];
-
-      if (lower.includes("chest") || lower.includes("heart") || lower.includes("pressure") || lower.includes("crush")) {
-        reply = "Oh no, chest tightness can be so distressing, and I want to make sure you're safe right now. Are you noticing that feeling spreading to your left arm, neck, or jaw, and are you having any cold sweats or shortness of breath?";
-        suggestions = ["Pain spreads to left arm", "No radiation to arms", "Feeling cold & sweaty", "Just tight pressure"];
-        detectedSymptoms.push("Chest discomfort / heaviness");
-      } else if (lower.includes("breath") || lower.includes("short") || lower.includes("gasp") || lower.includes("wheez")) {
-        reply = "Take a gentle, slow breath with me. Difficulty breathing is so uncomfortable. Can you speak full sentences comfortably right now, and do you have asthma or an inhaler with you?";
-        suggestions = ["Can speak full sentences", "Struggling to speak", "Have asthma/inhaler", "Started suddenly"];
-        detectedSymptoms.push("Difficulty catching breath");
-      } else if (lower.includes("fever") || lower.includes("hot") || lower.includes("chill") || lower.includes("temp") || lower.includes("burn")) {
-        reply = "Fevers really take a toll on you. I'm sorry you're feeling so unwell! How many days has this fever lasted, and have you noticed any stiff neck or trouble keeping fluids down?";
-        suggestions = ["Fever above 102°F", "Has stiff neck", "Trouble keeping fluids down", "Started 2 days ago"];
-        detectedSymptoms.push("High fever / chills");
-      } else if (lower.includes("fall") || lower.includes("hurt") || lower.includes("bone") || lower.includes("wound") || lower.includes("cut") || lower.includes("bleed") || lower.includes("twisted")) {
-        reply = "Ouch, that sounds so painful! I'm so sorry that happened to you. Are you able to put any weight on it, or is there any open cut or numbness?";
-        suggestions = ["Cannot bear weight / walk", "No open wound, just swelling", "Bleeding is controlled", "Severe pain when touched"];
-        detectedSymptoms.push("Physical injury / fall");
-      } else if (lower.includes("stomach") || lower.includes("belly") || lower.includes("cramp") || lower.includes("vomit") || lower.includes("nausea")) {
-        reply = "Stomach pain can be so exhausting. Is the pain sharp in one particular area (like the right lower side), or does your stomach feel rigid or hard to the touch?";
-        suggestions = ["Sharp pain on lower right side", "Belly feels rigid/hard", "Nausea and vomiting", "Dull ache all over"];
-        detectedSymptoms.push("Sharp abdominal pain");
-      }
-
-      return res.json({ reply, suggestions, detectedSymptoms });
+      const fallbackResult = generateMeaningfulCompanionResponse(message, patientInfo, checkedSymptomNames);
+      return res.json(fallbackResult);
     }
 
-    const systemPrompt = `You are CarePal, an extraordinarily compassionate, warm, empathetic, and attentive healthcare companion.
-You talk to the patient like a kind, supportive, understanding medical friend.
-Tone: Warm, empathetic, reassuring, human, gentle, and validating. Never robotic or cold.
-Guidelines:
-1. Validate how they feel with genuine kindness (e.g. "Oh, that sounds so uncomfortable," "I'm right here with you, let's take good care of you," "Thank you for telling me that").
-2. Ask 1 or 2 gentle, focused clarifying questions to understand what happened (e.g. when it started, severity, radiation, breathing, fever, red flags).
-3. Do NOT provide medical diagnosis.
-4. Keep the message friendly and concise (2-4 sentences max).
-5. Always suggest 3 to 4 quick-tap reply options that the patient can easily click.
-6. Extract any symptoms mentioned in the user's message that could be checked off.
+    const systemPrompt = `You are CarePal, an extraordinarily compassionate, knowledgeable, and attentive healthcare companion.
+You talk to the patient like an empathetic, highly supportive medical friend and triage guide.
+Your goal is to provide MEANINGFUL, reassuring, and informative answers to help the patient understand their situation, feel calm, and know the best next steps.
 
-Patient Profile:
-Name: ${patientInfo.name || "Friend"}
-Age: ${patientInfo.age || "Not specified"}
-Existing conditions: ${patientInfo.medicalConditions || "None reported"}
-Already checked items: ${checkedSymptomNames.join(", ") || "None yet"}
+Guidelines for meaningful patient communication:
+1. Empathy & Validation: Acknowledge their symptoms or questions with genuine care and warm human empathy (e.g., "I know how distressing that feels, [Name]," "You are in good hands, and we are going to get this addressed").
+2. Meaningful Medical Context (Educational, not diagnostic):
+   - Answer their specific questions directly and clearly.
+   - Explain what typically causes these symptoms in plain, easy-to-understand terms without giving a definitive medical diagnosis (e.g. "Sharp pain when bearing weight often points to an acute ankle ligament strain or bone contusion," "A fever is the body's natural immunological response to clear out bacteria or viruses").
+   - Offer 2-3 practical, safe, immediate comfort measures (e.g. rest, elevation, cool cloth, staying hydrated, avoiding strain).
+3. Red Flag Safety Awareness:
+   - If they describe severe symptoms (e.g. crushing chest pain, severe shortness of breath, loss of consciousness, inability to stand, stiff neck with fever, uncontrolled bleeding), clearly and calmly urge immediate urgent clinical evaluation.
+4. Next Steps in Care:
+   - Guide them toward generating their structured clinical triage note or booking a consultation with our on-duty specialists right from the app.
+5. Quick Reply Suggestions:
+   - Provide 3-4 natural, conversational follow-up chips the patient can easily tap.
+6. Detected Symptoms:
+   - List any specific symptoms mentioned so they can be tracked on their clinical intake checklist.
 
-Output strictly in JSON:
+Patient Context:
+- Name: ${patientInfo.name || "Friend"}
+- Age: ${patientInfo.age || "Not specified"}
+- Medical conditions: ${patientInfo.medicalConditions || "None recorded"}
+- Current checklist items: ${checkedSymptomNames.join(", ") || "None selected yet"}
+
+Respond strictly in valid JSON format:
 {
-  "reply": "Warm empathetic conversational message",
-  "suggestions": ["Suggestion 1", "Suggestion 2", "Suggestion 3"],
-  "detectedSymptoms": ["symptom detected"]
+  "reply": "Warm, detailed, meaningful answer explaining their situation and offering reassuring guidance.",
+  "comfortTips": ["Tip 1", "Tip 2", "Tip 3"],
+  "actionRecommendation": "triage" | "booking" | "emergency" | "comfort",
+  "suggestions": ["Follow-up chip 1", "Follow-up chip 2", "Follow-up chip 3"],
+  "detectedSymptoms": ["Symptom 1", "Symptom 2"]
 }`;
 
     const recentHistory = (conversationHistory || []).slice(-6).map((m: any) => `${m.sender === "user" ? "Patient" : "CarePal"}: ${m.text}`).join("\n");
-    const userPrompt = `Recent Conversation:\n${recentHistory}\n\nPatient just said: "${message}"\n\nGenerate your warm friendly companion response in JSON.`;
+    const userPrompt = `Recent Conversation:\n${recentHistory}\n\nPatient just said: "${message}"\n\nGenerate your warm, meaningful companion response in JSON.`;
 
-    const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-    const response = await ai.models.generateContent({
-      model,
+    const result = await generateContentWithFallback(ai, {
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
       ],
@@ -930,19 +1183,32 @@ Output strictly in JSON:
       },
     });
 
-    const parsed = JSON.parse(response.text || "{}");
-    return res.json({
-      reply: parsed.reply || "I hear you, and I'm right here with you. Tell me a bit more about how you're feeling right now.",
-      suggestions: parsed.suggestions || ["Started today", "Pain is moderate", "Feeling better", "Need to see doctor"],
-      detectedSymptoms: parsed.detectedSymptoms || []
-    });
+    const fallbackResult = generateMeaningfulCompanionResponse(message, patientInfo, checkedSymptomNames);
+
+    const parsed = cleanAndParseJson(result.response.text, null);
+
+    if (parsed && parsed.reply) {
+      return res.json({
+        reply: parsed.reply,
+        comfortTips: Array.isArray(parsed.comfortTips) && parsed.comfortTips.length > 0 
+          ? parsed.comfortTips 
+          : fallbackResult.comfortTips,
+        actionRecommendation: parsed.actionRecommendation || fallbackResult.actionRecommendation || "triage",
+        suggestions: Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0 
+          ? parsed.suggestions 
+          : fallbackResult.suggestions,
+        detectedSymptoms: Array.isArray(parsed.detectedSymptoms) && parsed.detectedSymptoms.length > 0 
+          ? parsed.detectedSymptoms 
+          : fallbackResult.detectedSymptoms
+      });
+    }
+
+    // If parsed JSON had unexpected shape, use meaningful fallback
+    return res.json(fallbackResult);
   } catch (err: any) {
-    console.error("Friendly companion chat error:", err);
-    res.json({
-      reply: "I'm right here with you! Tell me what's going on and when it started so we can make sure you see the doctor without delay.",
-      suggestions: ["Started 2 hours ago", "Severe pain", "Feeling feverish", "Trouble breathing"],
-      detectedSymptoms: []
-    });
+    console.warn("Friendly companion chat using rich clinical fallback:", err?.message || err);
+    const fallbackResult = generateMeaningfulCompanionResponse(message, patientInfo, checkedSymptomNames);
+    return res.json(fallbackResult);
   }
 });
 
@@ -1282,24 +1548,38 @@ app.get(["/auth/callback", "/auth/callback/"], oauthCallbackHandler);
 // ----------------------------------------------------
 
 async function start() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+  try {
+    if (process.env.NODE_ENV !== "production") {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        const indexPath = path.join(distPath, "index.html");
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(200).send("<!DOCTYPE html><html><body><h1>CarePal Triage</h1><p>Loading application...</p></body></html>");
+        }
+      });
+    }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Healthcare Intake Triage Server running on http://0.0.0.0:${PORT}`);
-  });
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Healthcare Intake Triage Server running on http://0.0.0.0:${PORT} (ENV: ${process.env.NODE_ENV || "development"})`);
+    });
+
+    server.on("error", (err) => {
+      console.error("Server listener error:", err);
+    });
+  } catch (err) {
+    console.error("Fatal startup error in start():", err);
+    process.exit(1);
+  }
 }
 
 start();

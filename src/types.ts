@@ -31,6 +31,8 @@ export interface ChatMessage {
   timestamp: string;
   suggestions?: string[];
   isTriageSummary?: boolean;
+  comfortTips?: string[];
+  actionRecommendation?: "triage" | "booking" | "emergency" | "comfort";
 }
 
 export interface Doctor {
