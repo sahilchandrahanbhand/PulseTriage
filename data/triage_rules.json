@@ -1,0 +1,315 @@
+{
+  "version": "1.0.0",
+  "track_id": "PS01",
+  "name": "Patient Intake Triage Protocol Knowledge Base",
+  "disclaimer": "This protocol knowledge base is strictly for intake routing and urgency prioritization. It does not provide medical diagnoses. Uncertain or high-risk cases must immediately escalate to a qualified clinician.",
+  "urgency_levels": [
+    {
+      "level": 1,
+      "name": "Immediate (Resuscitation)",
+      "max_wait_minutes": 0,
+      "color": "red",
+      "description": "Life or limb-threatening conditions requiring instantaneous medical intervention."
+    },
+    {
+      "level": 2,
+      "name": "Emergent",
+      "max_wait_minutes": 15,
+      "color": "rose",
+      "description": "High risk of rapid deterioration or severe distress requiring rapid provider evaluation."
+    },
+    {
+      "level": 3,
+      "name": "Urgent",
+      "max_wait_minutes": 60,
+      "color": "amber",
+      "description": "Serious condition requiring multiple diagnostic resources, patient hemodynamically stable."
+    },
+    {
+      "level": 4,
+      "name": "Less Urgent",
+      "max_wait_minutes": 120,
+      "color": "blue",
+      "description": "Stable condition requiring single diagnostic test or minor therapeutic intervention."
+    },
+    {
+      "level": 5,
+      "name": "Non-Urgent",
+      "max_wait_minutes": 240,
+      "color": "emerald",
+      "description": "Routine complaints requiring minimal resources or symptomatic reassurance."
+    }
+  ],
+  "departments": [
+    "Emergency Resuscitation Bay",
+    "Emergency Department - Acute Assessment",
+    "Emergency Department - Fast Track",
+    "Pediatric Emergency",
+    "Urgent Care Orthopedics / Fast Track",
+    "Urgent Care Clinic",
+    "Walk-In Ambulatory Clinic"
+  ],
+  "rules": [
+    {
+      "rule_id": "R-CHEST-01",
+      "complaint_family": "chest_pain",
+      "title": "Suspected Acute Coronary Syndrome / High-Risk Chest Pain",
+      "urgency_level": 1,
+      "urgency_name": "Immediate (Resuscitation)",
+      "department": "Emergency Resuscitation Bay",
+      "escalate_to_human": true,
+      "triggers": [
+        "chest pain with diaphoresis (sweating)",
+        "chest pressure radiating to left arm, neck, or jaw",
+        "crushing or squeezing substernal tightness with shortness of breath",
+        "chest discomfort with dizziness, near-syncope, or cold clammy skin"
+      ],
+      "required_checks": ["diaphoresis", "radiation_to_arm_or_jaw", "shortness_of_breath", "prior_cardiac_history"],
+      "citation_text": "Protocol R-CHEST-01: Chest pain or pressure accompanied by autonomic symptoms (diaphoresis, nausea), pain radiation to upper extremity/jaw, or respiratory distress carries high suspicion of Acute Coronary Syndrome (ACS) and requires immediate Resuscitation Bay routing and immediate human clinical assessment without diagnostic delay."
+    },
+    {
+      "rule_id": "R-CHEST-02",
+      "complaint_family": "chest_pain",
+      "title": "Acute Pleuritic or Positional Chest Pain",
+      "urgency_level": 2,
+      "urgency_name": "Emergent",
+      "department": "Emergency Department - Acute Assessment",
+      "escalate_to_human": true,
+      "triggers": [
+        "sharp chest pain worsened by deep inspiration or coughing",
+        "sudden onset unilateral pleuritic pain without trauma",
+        "chest pain with unexplained tachycardia or calf swelling"
+      ],
+      "required_checks": ["fever", "pleuritic_worsening_with_breath", "recent_immobilization_or_dvt_risk"],
+      "citation_text": "Protocol R-CHEST-02: Acute sharp pleuritic chest discomfort warrants urgent rule-out for pulmonary thromboembolism, spontaneous pneumothorax, or acute pericarditis. Requires 12-lead ECG and immediate physician evaluation."
+    },
+    {
+      "rule_id": "R-CHEST-03",
+      "complaint_family": "chest_pain",
+      "title": "Subacute Musculoskeletal / Reproducible Chest Wall Pain",
+      "urgency_level": 4,
+      "urgency_name": "Less Urgent",
+      "department": "Urgent Care Clinic",
+      "escalate_to_human": false,
+      "triggers": [
+        "pain precisely reproducible by pressing on specific costochondral joint",
+        "ache following heavy lifting or exercise without shortness of breath or sweating",
+        "gradual onset superficial chest wall tenderness"
+      ],
+      "required_checks": ["cardiac_red_flags_denied", "reproducible_on_palpation", "normal_breathing"],
+      "citation_text": "Protocol R-CHEST-03: Localized chest pain strictly reproducible by direct chest wall palpation with negative cardiovascular screens (no radiation, no diaphoresis, no dyspnea) is suitable for Urgent Care evaluation."
+    },
+    {
+      "rule_id": "R-BREATH-01",
+      "complaint_family": "breathing_difficulty",
+      "title": "Critical Airway Compromise or Respiratory Failure",
+      "urgency_level": 1,
+      "urgency_name": "Immediate (Resuscitation)",
+      "department": "Emergency Resuscitation Bay",
+      "escalate_to_human": true,
+      "triggers": [
+        "stridor or severe audible wheezing with tripoding posture",
+        "cyanosis of lips, tongue, or fingertips",
+        "inability to complete single-word sentences due to breathlessness",
+        "altered mental status, extreme agitation, or severe lethargy from hypoxia"
+      ],
+      "required_checks": ["speech_sentence_capacity", "stridor_or_choking", "cyanosis", "accessory_muscle_use"],
+      "citation_text": "Protocol R-BREATH-01: Inability to speak in full sentences, cyanosis, audible stridor, or severe work of breathing indicates impending respiratory failure. Requires immediate code/resuscitation allocation and airway team standby."
+    },
+    {
+      "rule_id": "R-BREATH-02",
+      "complaint_family": "breathing_difficulty",
+      "title": "Acute Bronchospasm or Moderate Respiratory Distress",
+      "urgency_level": 2,
+      "urgency_name": "Emergent",
+      "department": "Emergency Department - Acute Assessment",
+      "escalate_to_human": true,
+      "triggers": [
+        "acute asthma or COPD exacerbation unresponsive to home inhaler",
+        "shortness of breath with fever and productive rust-colored sputum",
+        "breathing difficulty with known congestive heart failure and orthopnea"
+      ],
+      "required_checks": ["asthma_copd_history", "inhaler_response", "leg_swelling_or_orthopnea"],
+      "citation_text": "Protocol R-BREATH-02: Acute bronchospasm unresponsive to rescue bronchodilators or dyspnea complicated by underlying cardiopulmonary history warrants emergent ED assessment and nebulized therapy."
+    },
+    {
+      "rule_id": "R-BREATH-03",
+      "complaint_family": "breathing_difficulty",
+      "title": "Mild Respiratory Tract Infection without Distress",
+      "urgency_level": 4,
+      "urgency_name": "Less Urgent",
+      "department": "Emergency Department - Fast Track",
+      "escalate_to_human": false,
+      "triggers": [
+        "mild shortness of breath with nasal congestion and sore throat",
+        "able to speak in uninterrupted paragraphs",
+        "chronic mild smoker cough without acute change or distress"
+      ],
+      "required_checks": ["respiratory_distress_denied", "speech_normal", "fever_status"],
+      "citation_text": "Protocol R-BREATH-03: Mild upper respiratory symptoms with normal conversational capability, no resting tachypnea, and no accessory muscle utilization routed to Fast Track."
+    },
+    {
+      "rule_id": "R-FEVER-01",
+      "complaint_family": "fever",
+      "title": "Neonatal / High-Risk Meningeal or Septic Fever Screen",
+      "urgency_level": 2,
+      "urgency_name": "Emergent",
+      "department": "Pediatric Emergency",
+      "escalate_to_human": true,
+      "triggers": [
+        "fever >= 38.0C (100.4F) in infant under 3 months of age",
+        "fever accompanied by neck stiffness, photophobia, or confusion",
+        "fever with non-blanching petechial or purpuric skin rash",
+        "immunocompromised patient (chemotherapy, transplant) with fever >= 38.3C"
+      ],
+      "required_checks": ["patient_age", "neck_stiffness", "petechial_rash", "immunocompromised_status"],
+      "citation_text": "Protocol R-FEVER-01: Fever in neonates (<90 days) or fever combined with meningeal signs (stiff neck, photophobia) or non-blanching rash requires immediate emergent routing for sepsis/meningitis workup and direct physician escalation."
+    },
+    {
+      "rule_id": "R-FEVER-02",
+      "complaint_family": "fever",
+      "title": "Fever with Significant Dehydration or Intractable Vomiting",
+      "urgency_level": 3,
+      "urgency_name": "Urgent",
+      "department": "Emergency Department - Acute Assessment",
+      "escalate_to_human": false,
+      "triggers": [
+        "persistent high fever (>39C) lasting >72 hours",
+        "fever with inability to keep liquids down for >12 hours",
+        "fever with postural dizziness or marked lethargy"
+      ],
+      "required_checks": ["duration_days", "oral_intake_tolerance", "urinary_frequency"],
+      "citation_text": "Protocol R-FEVER-02: Prolonged fever with signs of systemic dehydration or inability to maintain oral hydration warrants Urgent care for intravenous fluid rehydration and lab investigation."
+    },
+    {
+      "rule_id": "R-FEVER-03",
+      "complaint_family": "fever",
+      "title": "Uncomplicated Acute Viral Syndrome / Mild Fever",
+      "urgency_level": 4,
+      "urgency_name": "Less Urgent",
+      "department": "Walk-In Ambulatory Clinic",
+      "escalate_to_human": false,
+      "triggers": [
+        "fever < 38.8C for 1-2 days with common cold or mild malaise",
+        "alert adult patient tolerating oral fluids normally",
+        "mild fever without focal neurological, respiratory, or abdominal red flags"
+      ],
+      "required_checks": ["red_flags_denied", "hydration_status", "alertness"],
+      "citation_text": "Protocol R-FEVER-03: Mild-to-moderate fever of short duration (<3 days) in an alert, well-hydrated adult with no high-risk comorbidities or focal signs routes to Walk-In Ambulatory Clinic."
+    },
+    {
+      "rule_id": "R-INJURY-01",
+      "complaint_family": "injury",
+      "title": "Major Trauma / Neurovascular Compromise / High Kinetic Mechanism",
+      "urgency_level": 1,
+      "urgency_name": "Immediate (Resuscitation)",
+      "department": "Emergency Resuscitation Bay",
+      "escalate_to_human": true,
+      "triggers": [
+        "penetrating injury to head, neck, torso, or groin",
+        "severe deformity of limb with cold/pulseless distal extremity",
+        "fall > 3 meters or high-speed vehicular rollover with loss of consciousness",
+        "active uncontrollable arterial hemorrhage"
+      ],
+      "required_checks": ["mechanism_of_injury", "loss_of_consciousness", "pulse_and_sensation", "active_bleeding"],
+      "citation_text": "Protocol R-INJURY-01: High-energy kinetic mechanism, penetrative trauma, pulseless injured extremity, or uncontrolled bleeding triggers Level 1 Resuscitation and immediate trauma team activation."
+    },
+    {
+      "rule_id": "R-INJURY-02",
+      "complaint_family": "injury",
+      "title": "Suspected Fracture / Significant Blunt Extremity Trauma",
+      "urgency_level": 3,
+      "urgency_name": "Urgent",
+      "department": "Urgent Care Orthopedics / Fast Track",
+      "escalate_to_human": false,
+      "triggers": [
+        "twisted ankle or knee with immediate inability to take 4 weight-bearing steps",
+        "fall onto outstretched hand with focal wrist tenderness or visible bump",
+        "deep laceration requiring sutures with controlled bleeding"
+      ],
+      "required_checks": ["weight_bearing_ability", "distal_sensation_normal", "bone_tenderness"],
+      "citation_text": "Protocol R-INJURY-02: Isolated extremity trauma with positive weight-bearing deficit or bony focal tenderness (Ottawa rules positive) requires radiographic imaging and orthopedic evaluation."
+    },
+    {
+      "rule_id": "R-INJURY-03",
+      "complaint_family": "injury",
+      "title": "Minor Contusion, Superficial Abrasion, or Mild Strain",
+      "urgency_level": 5,
+      "urgency_name": "Non-Urgent",
+      "department": "Walk-In Ambulatory Clinic",
+      "escalate_to_human": false,
+      "triggers": [
+        "minor scrape or bruise with intact skin and minimal swelling",
+        "mild muscle strain occurring >24 hours ago, able to walk and move normally",
+        "superficial papercut or minor skin scratch with no infection"
+      ],
+      "required_checks": ["mobility_intact", "skin_intact_or_superficial", "no_neuro_deficit"],
+      "citation_text": "Protocol R-INJURY-03: Low-velocity superficial soft tissue trauma with full mobility and preserved neurovascular integrity routes to Walk-In Ambulatory Clinic."
+    },
+    {
+      "rule_id": "R-ABDOM-01",
+      "complaint_family": "abdominal_pain",
+      "title": "Acute Surgical Abdomen / Peritoneal Shock Screen",
+      "urgency_level": 1,
+      "urgency_name": "Immediate (Resuscitation)",
+      "department": "Emergency Resuscitation Bay",
+      "escalate_to_human": true,
+      "triggers": [
+        "sudden catastrophic abdominal pain with rigid board-like abdomen",
+        "severe abdominal pain with syncope, profound dizziness, or hypotension",
+        "acute severe lower pelvic pain in female of childbearing age with missed period",
+        "vomiting blood (hematemesis) or black tarry stools (melena)"
+      ],
+      "required_checks": ["board_like_rigidity", "syncope_or_collapse", "pregnancy_risk", "gi_bleeding"],
+      "citation_text": "Protocol R-ABDOM-01: Acute severe abdomen presenting with involuntary rigidity, hemodynamic collapse, active GI hemorrhage, or suspected ruptured ectopic pregnancy triggers immediate emergency surgical evaluation."
+    },
+    {
+      "rule_id": "R-ABDOM-02",
+      "complaint_family": "abdominal_pain",
+      "title": "Focal Acute Abdominal Pain (Appendicitis / Cholecystitis Screen)",
+      "urgency_level": 3,
+      "urgency_name": "Urgent",
+      "department": "Emergency Department - Acute Assessment",
+      "escalate_to_human": true,
+      "triggers": [
+        "pain starting around navel then migrating to right lower abdomen with nausea",
+        "sharp right upper quadrant pain after eating fatty food, radiating to shoulder",
+        "severe flank pain radiating to groin in colicky waves"
+      ],
+      "required_checks": ["pain_migration", "fever_present", "urinary_symptoms"],
+      "citation_text": "Protocol R-ABDOM-02: Progressive focal abdominal pain with migration to RLQ or RUQ warrants urgent diagnostic laboratory and ultrasound/CT imaging for acute appendicitis, cholecystitis, or nephrolithiasis."
+    },
+    {
+      "rule_id": "R-ABDOM-03",
+      "complaint_family": "abdominal_pain",
+      "title": "Mild Acute Gastroenteritis / Dyspepsia",
+      "urgency_level": 4,
+      "urgency_name": "Less Urgent",
+      "department": "Urgent Care Clinic",
+      "escalate_to_human": false,
+      "triggers": [
+        "diffuse crampy belly discomfort with mild loose stools and no blood",
+        "mild burning indigestion after meals with soft non-tender abdomen",
+        "nausea without dehydration, tolerating oral fluids"
+      ],
+      "required_checks": ["soft_abdomen", "no_blood_in_stool", "hydration_intact"],
+      "citation_text": "Protocol R-ABDOM-03: Mild crampy abdominal discomfort without focal tenderness, peritoneal signs, or bloody stool is appropriate for outpatient or urgent care symptomatic management."
+    },
+    {
+      "rule_id": "R-ESCALATE-01",
+      "complaint_family": "general_escalation",
+      "title": "Clinical Escalation for Incomplete, Ambiguous, or High-Risk Presentations",
+      "urgency_level": 2,
+      "urgency_name": "Emergent",
+      "department": "Emergency Department - Acute Assessment",
+      "escalate_to_human": true,
+      "triggers": [
+        "patient presentation contains critical ambiguities or unexplained vital instability",
+        "symptoms cannot be safely categorized by standard outpatient rules",
+        "unconscious, severely confused, or medically unstable patient"
+      ],
+      "required_checks": ["escalation_reason"],
+      "citation_text": "Protocol R-ESCALATE-01: The triage system identified critical informational gaps or elevated risk indicators that cannot be safely reconciled by outpatient heuristic rules. Mandated immediate bedside triage nurse or physician evaluation."
+    }
+  ]
+}

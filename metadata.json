@@ -1,0 +1,6 @@
+{
+  "name": "Patient Intake Triage Assistant",
+  "description": "Healthcare patient intake triage assistant with secure OAuth authentication, conversational follow-ups, and deterministic rule-grounded routing (TRACK_ID=PS01).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
